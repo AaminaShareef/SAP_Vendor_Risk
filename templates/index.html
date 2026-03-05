@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>SAP Vendor Risk Monitoring System</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}"/>
+  <link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;500;600;700;800&family=DM+Mono:wght@300;400;500&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet"/>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css"/>
+</head>
+<body class="upload-body">
+
+  <!-- Sidebar -->
+  <aside class="sidebar">
+    <div class="sidebar-logo">
+      <i class="fas fa-shield-alt"></i>
+      <span>VendorRisk</span>
+    </div>
+    <nav class="sidebar-nav">
+      <a href="/" class="nav-item active"><i class="fas fa-upload"></i><span>Upload</span></a>
+      <a href="/results" class="nav-item" id="nav-dashboard"><i class="fas fa-chart-line"></i><span>Dashboard</span></a>
+      <a href="/vendors" class="nav-item" id="nav-vendors"><i class="fas fa-users"></i><span>Vendors</span></a>
+    </nav>
+    <div class="sidebar-footer">
+      <span>SAP VRM v2.0</span>
+    </div>
+  </aside>
+
+  <!-- Main Content -->
+  <main class="main-content">
+    <header class="page-header">
+      <div>
+        <h1 class="page-title">Vendor Risk Analysis</h1>
+        <p class="page-subtitle">Upload SAP Accounts Payable data to begin ML-powered risk assessment</p>
+      </div>
+      <div class="header-badge">
+        <i class="fas fa-database"></i> SAP AP Module
+      </div>
+    </header>
+
+    <!-- Upload Zone -->
+    <div class="upload-container">
+      <div class="upload-hero">
+        <div class="upload-hero-icon">
+          <i class="fas fa-file-csv"></i>
+        </div>
+        <h2>SAP Data Upload</h2>
+        <p>Upload the three required SAP Accounts Payable CSV files to run the vendor risk analysis pipeline using K-Means clustering and Random Forest classification.</p>
+      </div>
+
+      <!-- Hidden file inputs (outside label to avoid browser quirks) -->
+      <input type="file" name="bsik_file" id="bsik_file" accept=".csv" style="display:none"/>
+      <input type="file" name="lfa1_file" id="lfa1_file" accept=".csv" style="display:none"/>
+      <input type="file" name="lfb1_file" id="lfb1_file" accept=".csv" style="display:none"/>
+
+      <div class="file-upload-grid">
+
+        <!-- BSIK -->
+        <div class="file-card" id="card-bsik">
+          <div class="file-card-header">
+            <div class="file-icon bsik">
+              <i class="fas fa-file-invoice-dollar"></i>
+            </div>
+            <div>
+              <h3>Open Items</h3>
+              <p class="file-desc">BSIK_Open_Items.csv</p>
+            </div>
+          </div>
+          <p class="file-info">Contains open payable items with document date, due date, and invoice amounts for aging analysis.</p>
+          <div class="file-drop-zone" id="drop-bsik">
+            <div class="drop-content" id="drop-content-bsik">
+              <i class="fas fa-cloud-upload-alt"></i>
+              <span>Click to browse or drag &amp; drop</span>
+              <small>CSV files only</small>
+            </div>
+          </div>
+        </div>
+
+        <!-- LFA1 -->
+        <div class="file-card" id="card-lfa1">
+          <div class="file-card-header">
+            <div class="file-icon lfa1">
+              <i class="fas fa-building"></i>
+            </div>
+            <div>
+              <h3>Vendor Master General</h3>
+              <p class="file-desc">LFA1_Vendor_Master_General.csv</p>
+            </div>
+          </div>
+          <p class="file-info">General vendor master data including name, country, city, and account group information.</p>
+          <div class="file-drop-zone" id="drop-lfa1">
+            <div class="drop-content" id="drop-content-lfa1">
+              <i class="fas fa-cloud-upload-alt"></i>
+              <span>Click to browse or drag &amp; drop</span>
+              <small>CSV files only</small>
+            </div>
+          </div>
+        </div>
+
+        <!-- LFB1 -->
+        <div class="file-card" id="card-lfb1">
+          <div class="file-card-header">
+            <div class="file-icon lfb1">
+              <i class="fas fa-sitemap"></i>
+            </div>
+            <div>
+              <h3>Vendor Master CompCode</h3>
+              <p class="file-desc">LFB1_Vendor_Master_CompCode.csv</p>
+            </div>
+          </div>
+          <p class="file-info">Company code specific vendor data including reconciliation accounts and payment terms.</p>
+          <div class="file-drop-zone" id="drop-lfb1">
+            <div class="drop-content" id="drop-content-lfb1">
+              <i class="fas fa-cloud-upload-alt"></i>
+              <span>Click to browse or drag &amp; drop</span>
+              <small>CSV files only</small>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Run Button -->
+      <div class="run-section">
+        <button type="button" class="btn-run" id="runBtn">
+          <i class="fas fa-play-circle"></i>
+          <span>Run Vendor Risk Analysis</span>
+        </button>
+        <p class="run-hint" id="runHint">All three CSV files must be uploaded before analysis can begin.</p>
+      </div>
+
+      <!-- Progress -->
+      <div class="progress-overlay" id="progressOverlay" style="display:none">
+        <div class="progress-box">
+          <div class="spinner"></div>
+          <h3>Analysing Vendor Risk...</h3>
+          <p id="progressMsg">Loading SAP data files...</p>
+          <div class="progress-bar-wrap">
+            <div class="progress-bar" id="progressBar"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Error -->
+      <div class="error-banner" id="errorBanner" style="display:none">
+        <i class="fas fa-exclamation-triangle"></i>
+        <span id="errorMsg"></span>
+        <button onclick="document.getElementById('errorBanner').style.display='none'"><i class="fas fa-times"></i></button>
+      </div>
+    </div>
+
+    <!-- Info Cards -->
+    <div class="info-grid">
+      <div class="info-card">
+        <i class="fas fa-brain"></i>
+        <h4>ML-Powered Analysis</h4>
+        <p>Combines K-Means clustering and Random Forest classification to predict vendor risk with high accuracy.</p>
+      </div>
+      <div class="info-card">
+        <i class="fas fa-clock"></i>
+        <h4>Aging Analysis</h4>
+        <p>Automatically categorises overdue invoices into buckets: 0–30, 31–60, 61–90, 91–120, and 120+ days.</p>
+      </div>
+      <div class="info-card">
+        <i class="fas fa-chart-pie"></i>
+        <h4>Risk Classification</h4>
+        <p>Vendors classified as Low, Medium, High, or Critical risk based on composite scoring algorithms.</p>
+      </div>
+      <div class="info-card">
+        <i class="fas fa-download"></i>
+        <h4>Export Results</h4>
+        <p>Download the complete risk assessment report as a CSV file for further analysis and reporting.</p>
+      </div>
+    </div>
+  </main>
+
+  <script src="{{ url_for('static', filename='js/upload.js') }}"></script>
+</body>
+</html>

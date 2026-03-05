@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Vendor Table – SAP Vendor Risk Monitoring</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}" />
+    <link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;500;600;700;800&family=DM+Mono:wght@300;400;500&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" />
+</head>
+<body>
+
+    <!-- Sidebar -->
+    <aside class="sidebar">
+        <div class="sidebar-logo">
+            <i class="fas fa-shield-alt"></i>
+            <span>VendorRisk</span>
+        </div>
+        <nav class="sidebar-nav">
+            <a href="/" class="nav-item"><i class="fas fa-upload"></i><span>Upload</span></a>
+            <a href="/results" class="nav-item"><i class="fas fa-chart-line"></i><span>Dashboard</span></a>
+            <a href="/vendors" class="nav-item active"><i class="fas fa-users"></i><span>Vendors</span></a>
+        </nav>
+        <div class="sidebar-footer">
+            <span>SAP VRM v2.0</span>
+        </div>
+    </aside>
+
+    <!-- Main -->
+    <main class="main-content">
+        <header class="page-header">
+            <div>
+                <h1 class="page-title">Vendor Risk Table</h1>
+                <p class="page-subtitle">Complete listing of all vendors with ML risk assessment</p>
+            </div>
+            <div class="header-actions">
+                <a href="/download/csv" class="btn-secondary"><i class="fas fa-download"></i> Export CSV</a>
+                <a href="/results" class="btn-secondary"><i class="fas fa-chart-line"></i> Dashboard</a>
+            </div>
+        </header>
+
+        <!-- Controls -->
+        <div class="table-controls">
+            <div class="table-search">
+                <i class="fas fa-search"></i>
+                <input type="text" id="searchInput" placeholder="Search by vendor ID or name..." />
+            </div>
+            <div class="filter-pills" id="filterPills">
+                <button class="pill active" data-filter="all">All</button>
+                <button class="pill pill-low" data-filter="Low">Low</button>
+                <button class="pill pill-medium" data-filter="Medium">Medium</button>
+                <button class="pill pill-high" data-filter="High">High</button>
+                <button class="pill pill-critical" data-filter="Critical">Critical</button>
+            </div>
+            <div class="table-info">
+                <span id="recordCount">Loading...</span>
+            </div>
+        </div>
+
+        <!-- Table -->
+        <div class="card">
+            <div class="table-wrapper">
+                <table class="data-table" id="vendorTable">
+                    <thead>
+                        <tr>
+                            <th class="sortable" data-col="vendor_id">Vendor ID <i class="fas fa-sort"></i></th>
+                            <th class="sortable" data-col="vendor_name">Vendor Name <i class="fas fa-sort"></i></th>
+                            <th class="sortable" data-col="total_invoices">Invoices <i class="fas fa-sort"></i></th>
+                            <th class="sortable" data-col="overdue_amount">Overdue Amount <i class="fas fa-sort"></i></th>
+                            <th class="sortable" data-col="max_days_overdue">Max Days OD <i class="fas fa-sort"></i></th>
+                            <th class="sortable" data-col="avg_days_overdue">Avg Days OD <i class="fas fa-sort"></i></th>
+                            <th class="sortable" data-col="risk_score">Risk Score <i class="fas fa-sort"></i></th>
+                            <th class="sortable" data-col="predicted_risk">Risk Level <i class="fas fa-sort"></i></th>
+                        </tr>
+                    </thead>
+                    <tbody id="vendorBody"></tbody>
+                </table>
+            </div>
+
+            <!-- Pagination -->
+            <div class="pagination" id="pagination">
+                <button id="prevBtn" class="pg-btn"><i class="fas fa-chevron-left"></i></button>
+                <div id="pageNumbers" class="page-numbers"></div>
+                <button id="nextBtn" class="pg-btn"><i class="fas fa-chevron-right"></i></button>
+                <span class="pg-info" id="pgInfo"></span>
+            </div>
+        </div>
+
+        <!-- Legend -->
+        <div class="legend-row">
+            <span class="legend-item"><span class="legend-dot critical"></span> Critical – immediate action required</span>
+            <span class="legend-item"><span class="legend-dot high"></span> High – monitor closely</span>
+            <span class="legend-item"><span class="legend-dot medium"></span> Medium – review periodically</span>
+            <span class="legend-item"><span class="legend-dot low"></span> Low – minimal risk</span>
+        </div>
+    </main>
+
+    <script>
+        const RAW_DATA = {{ data | safe }};
+    </script>
+    <script src="{{ url_for('static', filename='js/vendors.js') }}"></script>
+</body>
+</html>
