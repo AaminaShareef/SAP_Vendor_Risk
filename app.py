@@ -1,163 +1,231 @@
+
 """
+
 SAP Vendor Risk Monitoring System
+
 Flask Application
+
 """
-
+ 
 import os
+
 import json
+
 import uuid
+
 from flask import Flask, render_template, request, jsonify, redirect, url_for, session
+
 from werkzeug.utils import secure_filename
+
 from ml_model import run_vendor_risk_analysis
+
 import numpy as np
-
+ 
 app = Flask(__name__)
+
 app.secret_key = "sap_vrm_secret_2024"
-
+ 
 os.makedirs("uploads", exist_ok=True)
+
 os.makedirs("results", exist_ok=True)
-
+ 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-
+ 
 UPLOAD_FOLDER = os.path.join(BASE_DIR, "uploads")
+
 RESULTS_FOLDER = os.path.join(BASE_DIR, "results")
-
+ 
 ALLOWED_EXTENSIONS = {"csv"}
-
+ 
 app.config["UPLOAD_FOLDER"] = UPLOAD_FOLDER
+
 app.config["MAX_CONTENT_LENGTH"] = 50 * 1024 * 1024
-
-
+ 
+ 
 # ---------------------------------------------------
+
 # Ensure folders exist
+
 # ---------------------------------------------------
+
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+
 os.makedirs(RESULTS_FOLDER, exist_ok=True)
-
-
+ 
+ 
 # ---------------------------------------------------
+
 # Utility
+
 # ---------------------------------------------------
+
 def allowed_file(filename):
+
     return "." in filename and filename.rsplit(".", 1)[1].lower() in ALLOWED_EXTENSIONS
-
-
+ 
+ 
 def convert_numpy(obj):
+
     """Convert numpy types for JSON serialization."""
+
     if isinstance(obj, (np.integer)):
+
         return int(obj)
+
     if isinstance(obj, (np.floating)):
+
         return float(obj)
+
     if isinstance(obj, (np.ndarray)):
+
         return obj.tolist()
+
     return obj
-
-
+ 
+ 
 # ---------------------------------------------------
+
 # Routes
+
 # ---------------------------------------------------
-
+ 
 @app.route("/")
+
 def index():
+
     return render_template("index.html")
-
-
+ 
+ 
 @app.route("/analyze", methods=["POST"])
+
 def analyze():
-
+ 
     required = ["bsik_file", "lfa1_file", "lfb1_file"]
+
     saved_paths = {}
-
+ 
     for field in required:
-
+ 
         if field not in request.files:
+
             return jsonify({"error": f"Missing file: {field}"}), 400
-
+ 
         file = request.files[field]
-
+ 
         if file.filename == "":
+
             return jsonify({"error": f"No file selected for {field}"}), 400
-
+ 
         if not allowed_file(file.filename):
+
             return jsonify({"error": f"Invalid file type for {field}. Only CSV allowed."}), 400
-
+ 
         uid = str(uuid.uuid4())[:8]
+
         filename = uid + "_" + secure_filename(file.filename)
-
+ 
         path = os.path.join(app.config["UPLOAD_FOLDER"], filename)
+
         file.save(path)
-
+ 
         saved_paths[field] = path
-
+ 
     try:
-
+ 
         results = run_vendor_risk_analysis(
+
             bsik_path=saved_paths["bsik_file"],
+
             lfa1_path=saved_paths["lfa1_file"],
+
             lfb1_path=saved_paths["lfb1_file"],
+
         )
-
+ 
         # convert numpy values
+
         results = json.loads(json.dumps(results, default=convert_numpy))
-
+ 
     except Exception as e:
+
         return jsonify({"error": f"Analysis failed: {str(e)}"}), 500
-
+ 
     finally:
+
         for p in saved_paths.values():
+
             try:
+
                 os.remove(p)
+
             except Exception:
+
                 pass
-
+ 
     result_id = str(uuid.uuid4())[:12]
-    result_file = os.path.join(RESULTS_FOLDER, f"{result_id}.json")
 
+    result_file = os.path.join(RESULTS_FOLDER, f"{result_id}.json")
+ 
     with open(result_file, "w") as f:
+
         json.dump(results, f)
-
+ 
     session["result_id"] = result_id
-
+ 
     return jsonify({"status": "ok", "result_id": result_id})
-
-
+ 
+ 
 @app.route("/results")
+
 def results():
-
+ 
     result_id = session.get("result_id")
-
+ 
     if not result_id:
-        return redirect(url_for("index"))
 
+        return redirect(url_for("index"))
+ 
     result_file = os.path.join(RESULTS_FOLDER, f"{result_id}.json")
-
+ 
     if not os.path.exists(result_file):
+
         return redirect(url_for("index"))
-
+ 
     with open(result_file) as f:
-        data = json.load(f)
 
+        data = json.load(f)
+ 
     return render_template("results.html", data=json.dumps(data))
-
-
+ 
+ 
 @app.route("/vendors")
+
 def vendors():
-
+ 
     result_id = session.get("result_id")
-
+ 
     if not result_id:
-        return redirect(url_for("index"))
 
+        return redirect(url_for("index"))
+ 
     result_file = os.path.join(RESULTS_FOLDER, f"{result_id}.json")
-
+ 
     if not os.path.exists(result_file):
+
         return redirect(url_for("index"))
-
+ 
     with open(result_file) as f:
+
         data = json.load(f)
-
+ 
     return render_template("vendors.html", data=json.dumps(data))
-
-
+ 
+ 
 if __name__ == "__main__":
-    app.run(debug=True)
+
+    import os
+
+    port = int(os.environ.get("PORT", 5000))
+
+    app.run(host="0.0.0.0", port=port, debug=False)
+ 
