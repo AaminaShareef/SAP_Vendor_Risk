@@ -241,7 +241,7 @@ def _kmeans_cluster_and_score(df: pd.DataFrame):
         0.20,   # AVG_DAYS_OVERDUE       – chronic behaviour
         0.10,   # PCT_CRITICAL_INVOICES  – severity breadth
         0.03,   # AMOUNT_CONCENTRATION   – structural signal (minor)
-        0.02,   # RECENCY_DAYS           – age of exposure (minor)
+        0.02,   # RECENCY_DAYS           – age of exposure (minor)Age of oldest unpaid invoice
     ])
 
     centroid_danger = centroids @ direction_weights          # scalar per cluster
