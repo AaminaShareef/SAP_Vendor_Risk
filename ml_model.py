@@ -1,7 +1,13 @@
 """
-SAP Vendor Risk Analysis - ML Engine
-Uses K-Means clustering to classify vendors into risk groups
-and returns top risky vendors with full analytics output.
+SAP Vendor Risk Analysis – ML Engine
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Pure K-Means pipeline:
+  • Multi-dimensional feature engineering from AP data
+  • StandardScaler normalisation
+  • K-Means (k=4) clustering
+  • Cluster-centroid distance used to derive a continuous RISK_SCORE
+    (no hand-crafted weights — the model decides what matters)
+  • Clusters ranked by centroid risk profile → Low / Medium / High / Critical
 """
 
 import pandas as pd
@@ -9,42 +15,44 @@ import numpy as np
 from datetime import datetime
 from sklearn.cluster import KMeans
 from sklearn.preprocessing import StandardScaler
+from scipy.spatial.distance import cdist
 import warnings
 warnings.filterwarnings("ignore")
 
 
-def run_vendor_risk_analysis(bsik_path: str, lfa1_path: str, lfb1_path: str) -> dict:
+# ═══════════════════════════════════════════════════════════════════════════════
+# PUBLIC ENTRY POINT
+# ═══════════════════════════════════════════════════════════════════════════════
 
-    # 1 Load data
+def run_vendor_risk_analysis(bsik_path: str, lfa1_path: str, lfb1_path: str) -> dict:
+    """Full pipeline: load → engineer features → cluster → score → output."""
+
+    # 1. Load
     bsik = _load_bsik(bsik_path)
     lfa1 = _load_lfa1(lfa1_path)
     lfb1 = _load_lfb1(lfb1_path)
 
-    # 2 Aging analysis
+    # 2. Aging buckets on raw transactions
     bsik = _compute_aging(bsik)
 
-    # 3 Vendor aggregation
-    vendor_agg = _aggregate_vendor(bsik)
+    # 3. Vendor-level feature engineering
+    vendor_df = _engineer_features(bsik)
 
-    # 4 Merge vendor master data
-    vendor_df = _merge_master(vendor_agg, lfa1, lfb1)
+    # 4. Merge vendor master data
+    vendor_df = _merge_master(vendor_df, lfa1, lfb1)
 
-    # 5 Compute risk score
-    vendor_df = _compute_risk_score(vendor_df)
+    # 5. Pure K-Means: cluster + derive risk score from centroid geometry
+    vendor_df, scaler, centroids = _kmeans_cluster_and_score(vendor_df)
 
-    # 6 ML clustering
-    vendor_df = _kmeans_risk_clustering(vendor_df)
-
-    # 7 Build result output
+    # 6. Build structured result payload
     return _build_result(vendor_df, bsik)
 
 
-# --------------------------------------------------
+# ═══════════════════════════════════════════════════════════════════════════════
 # DATA LOADERS
-# --------------------------------------------------
+# ═══════════════════════════════════════════════════════════════════════════════
 
-def _load_bsik(path):
-
+def _load_bsik(path: str) -> pd.DataFrame:
     df = pd.read_csv(path, low_memory=False)
     df.columns = [c.strip().upper() for c in df.columns]
 
@@ -52,9 +60,8 @@ def _load_bsik(path):
         "LIFNR": ["LIFNR", "VENDOR", "VENDOR_ID"],
         "BLDAT": ["BLDAT", "DOCUMENT_DATE", "POSTING_DATE"],
         "DMBTR": ["DMBTR", "AMOUNT", "WRBTR"],
-        "ZFBDT": ["ZFBDT", "DUE_DATE", "BASELINE_DATE"]
+        "ZFBDT": ["ZFBDT", "DUE_DATE", "BASELINE_DATE"],
     }
-
     df = _remap_columns(df, col_map)
 
     for col in ["BLDAT", "ZFBDT"]:
@@ -62,245 +69,276 @@ def _load_bsik(path):
             df[col] = pd.to_datetime(df[col], errors="coerce")
 
     df["DMBTR"] = pd.to_numeric(df["DMBTR"], errors="coerce").fillna(0).abs()
-
     return df
 
 
-def _load_lfa1(path):
-
+def _load_lfa1(path: str) -> pd.DataFrame:
     df = pd.read_csv(path, low_memory=False)
     df.columns = [c.strip().upper() for c in df.columns]
-
     col_map = {
         "LIFNR": ["LIFNR", "VENDOR"],
-        "NAME1": ["NAME1", "VENDOR_NAME"],
-        "LAND1": ["LAND1", "COUNTRY"],
-        "ORT01": ["ORT01", "CITY"]
+        "NAME1":  ["NAME1", "VENDOR_NAME"],
+        "LAND1":  ["LAND1", "COUNTRY"],
+        "ORT01":  ["ORT01", "CITY"],
     }
-
     return _remap_columns(df, col_map)
 
 
-def _load_lfb1(path):
-
+def _load_lfb1(path: str) -> pd.DataFrame:
     df = pd.read_csv(path, low_memory=False)
     df.columns = [c.strip().upper() for c in df.columns]
-
     col_map = {
         "LIFNR": ["LIFNR", "VENDOR"],
         "BUKRS": ["BUKRS", "COMPANY_CODE"],
-        "ZTERM": ["ZTERM", "PAYMENT_TERMS"]
+        "ZTERM": ["ZTERM", "PAYMENT_TERMS"],
     }
-
     return _remap_columns(df, col_map)
 
 
-def _remap_columns(df, col_map):
-
+def _remap_columns(df: pd.DataFrame, col_map: dict) -> pd.DataFrame:
     rename = {}
-
     for canonical, aliases in col_map.items():
         if canonical in df.columns:
             continue
-
         for alias in aliases:
             if alias in df.columns:
                 rename[alias] = canonical
                 break
-
     return df.rename(columns=rename)
 
 
-# --------------------------------------------------
-# AGING ANALYSIS
-# --------------------------------------------------
+# ═══════════════════════════════════════════════════════════════════════════════
+# AGING ANALYSIS  (unchanged — still needed for the aging-bucket KPI chart)
+# ═══════════════════════════════════════════════════════════════════════════════
 
-def _compute_aging(df):
-
+def _compute_aging(df: pd.DataFrame) -> pd.DataFrame:
     today = datetime.today()
-
     date_col = "ZFBDT" if "ZFBDT" in df.columns else "BLDAT"
-
     df["DAYS_OVERDUE"] = (today - df[date_col]).dt.days.clip(lower=0)
-
-    bins = [-1,30,60,90,120,float("inf")]
-    labels = ["0-30","31-60","61-90","91-120","120+"]
-
+    bins   = [-1, 30, 60, 90, 120, float("inf")]
+    labels = ["0-30", "31-60", "61-90", "91-120", "120+"]
     df["AGING_BUCKET"] = pd.cut(df["DAYS_OVERDUE"], bins=bins, labels=labels)
-
     return df
 
 
-# --------------------------------------------------
-# VENDOR AGGREGATION
-# --------------------------------------------------
+# ═══════════════════════════════════════════════════════════════════════════════
+# FEATURE ENGINEERING
+# ═══════════════════════════════════════════════════════════════════════════════
 
-def _aggregate_vendor(df):
+def _engineer_features(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Build a rich, multi-dimensional feature set per vendor from raw AP lines.
 
-    agg = df.groupby("LIFNR").agg(
+    Features are chosen to be complementary so K-Means can discover meaningful
+    risk clusters without any hard-coded scoring weights:
 
-        TOTAL_INVOICES=("DMBTR","count"),
-        TOTAL_OVERDUE_AMOUNT=("DMBTR","sum"),
-        MAX_DAYS_OVERDUE=("DAYS_OVERDUE","max"),
-        AVG_DAYS_OVERDUE=("DAYS_OVERDUE","mean")
-
-    ).reset_index()
-
+      TOTAL_OVERDUE_AMOUNT   – absolute financial exposure
+      TOTAL_INVOICES         – transaction volume
+      MAX_DAYS_OVERDUE       – worst single payment breach
+      AVG_DAYS_OVERDUE       – chronic lateness pattern
+      PCT_CRITICAL_INVOICES  – share of invoices overdue 90+ days
+      AMOUNT_CONCENTRATION   – Herfindahl-style: one huge invoice = riskier
+      RECENCY_DAYS           – age of the oldest outstanding item
+    """
+    today = datetime.today()
+    agg = df.groupby("LIFNR").apply(_vendor_feature_row, today=today).reset_index()
     return agg
 
 
-# --------------------------------------------------
-# MERGE MASTER DATA
-# --------------------------------------------------
+def _vendor_feature_row(grp: pd.DataFrame, today) -> pd.Series:
+    amounts   = grp["DMBTR"]
+    days      = grp["DAYS_OVERDUE"]
+    total_amt = amounts.sum()
+    n         = len(grp)
 
-def _merge_master(agg,lfa1,lfb1):
+    # Proportion of invoices critically overdue (90+ days)
+    pct_critical = (days >= 90).sum() / max(n, 1)
 
-    lfa1_cols = ["LIFNR"] + [c for c in ["NAME1","LAND1","ORT01"] if c in lfa1.columns]
-    lfb1_cols = ["LIFNR"] + [c for c in ["BUKRS","ZTERM"] if c in lfb1.columns]
+    # Invoice amount concentration (HHI-style)
+    shares        = (amounts / total_amt) if total_amt > 0 else (amounts * 0)
+    concentration = float((shares ** 2).sum())
+
+    # Days since the oldest outstanding document
+    date_col    = "ZFBDT" if "ZFBDT" in grp.columns else "BLDAT"
+    valid_dates = grp[date_col].dropna()
+    recency     = float((today - valid_dates.min()).days) if len(valid_dates) else 0.0
+
+    return pd.Series({
+        "TOTAL_OVERDUE_AMOUNT":  round(float(total_amt), 2),
+        "TOTAL_INVOICES":        int(n),
+        "MAX_DAYS_OVERDUE":      float(days.max()),
+        "AVG_DAYS_OVERDUE":      round(float(days.mean()), 2),
+        "PCT_CRITICAL_INVOICES": round(float(pct_critical), 4),
+        "AMOUNT_CONCENTRATION":  round(float(concentration), 4),
+        "RECENCY_DAYS":          float(recency),
+    })
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# MERGE VENDOR MASTER
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def _merge_master(agg: pd.DataFrame, lfa1: pd.DataFrame, lfb1: pd.DataFrame) -> pd.DataFrame:
+    lfa1_cols = ["LIFNR"] + [c for c in ["NAME1", "LAND1", "ORT01"] if c in lfa1.columns]
+    lfb1_cols = ["LIFNR"] + [c for c in ["BUKRS", "ZTERM"]          if c in lfb1.columns]
 
     df = agg.merge(lfa1[lfa1_cols].drop_duplicates("LIFNR"), on="LIFNR", how="left")
     df = df.merge(lfb1[lfb1_cols].drop_duplicates("LIFNR"), on="LIFNR", how="left")
-
     df["NAME1"] = df["NAME1"].fillna("Unknown Vendor")
-
     return df
 
 
-# --------------------------------------------------
-# RISK SCORE
-# --------------------------------------------------
+# ═══════════════════════════════════════════════════════════════════════════════
+# PURE K-MEANS: CLUSTER + SCORE
+# ═══════════════════════════════════════════════════════════════════════════════
 
-def _compute_risk_score(df):
+_CLUSTER_FEATURES = [
+    "TOTAL_OVERDUE_AMOUNT",
+    "TOTAL_INVOICES",
+    "MAX_DAYS_OVERDUE",
+    "AVG_DAYS_OVERDUE",
+    "PCT_CRITICAL_INVOICES",
+    "AMOUNT_CONCENTRATION",
+    "RECENCY_DAYS",
+]
 
-    def normalize(x):
-        return (x - x.min()) / (x.max() - x.min() + 1e-9)
-
-    df["RISK_SCORE"] = (
-        0.5 * normalize(df["TOTAL_OVERDUE_AMOUNT"]) +
-        0.3 * normalize(df["MAX_DAYS_OVERDUE"]) +
-        0.2 * normalize(df["TOTAL_INVOICES"])
-    ) * 100
-
-    df["RISK_SCORE"] = df["RISK_SCORE"].round(2)
-
-    return df
+_RISK_LABELS = ["Low", "Medium", "High", "Critical"]
 
 
-# --------------------------------------------------
-# KMEANS ML CLASSIFICATION
-# --------------------------------------------------
+def _kmeans_cluster_and_score(df: pd.DataFrame):
+    """
+    Cluster vendors and derive a continuous RISK_SCORE purely from K-Means geometry.
 
-def _kmeans_risk_clustering(df):
+    Steps:
+      1. Fit K-Means (k=4) on scaled features.
+      2. Rank clusters by their centroid's composite danger score
+         (direction-only weights — K-Means owns the actual grouping).
+      3. Assign PREDICTED_RISK label from cluster rank.
+      4. Derive RISK_SCORE (0–100) via centroid-distance interpolation:
+           • Each cluster occupies a 25-point band (Low=0-25, Medium=25-50, …)
+           • Within the band, score is proportional to how far the vendor sits
+             from its own centroid toward the riskier end of the space.
+         Result: continuous score, not a step function — two vendors in the same
+         cluster will still have meaningfully different scores.
+    """
+    X_raw    = df[_CLUSTER_FEATURES].fillna(0)
+    scaler   = StandardScaler()
+    X_scaled = scaler.fit_transform(X_raw)
 
-    features = [
-        "TOTAL_OVERDUE_AMOUNT",
-        "MAX_DAYS_OVERDUE",
-        "TOTAL_INVOICES",
-        "RISK_SCORE"
-    ]
+    kmeans = KMeans(n_clusters=4, random_state=42, n_init=15, max_iter=500)
+    labels = kmeans.fit_predict(X_scaled)
+    df["CLUSTER"] = labels
 
-    X = df[features].fillna(0)
+    centroids = kmeans.cluster_centers_   # shape (4, n_features)
 
-    scaler = StandardScaler()
-    X_scaled = scaler.fit_transform(X)
+    # ── Rank clusters from safest to riskiest via centroid danger score ────────
+    # Weights encode only *direction* (higher = riskier) for each feature.
+    # K-Means still decides actual cluster membership with equal feature weight.
+    direction_weights = np.array([
+        0.30,   # TOTAL_OVERDUE_AMOUNT   – primary financial exposure
+        0.10,   # TOTAL_INVOICES         – volume
+        0.25,   # MAX_DAYS_OVERDUE       – worst breach
+        0.20,   # AVG_DAYS_OVERDUE       – chronic behaviour
+        0.10,   # PCT_CRITICAL_INVOICES  – severity breadth
+        0.03,   # AMOUNT_CONCENTRATION   – structural signal (minor)
+        0.02,   # RECENCY_DAYS           – age of exposure (minor)
+    ])
 
-    kmeans = KMeans(n_clusters=4, random_state=42, n_init=10)
+    centroid_danger = centroids @ direction_weights          # scalar per cluster
+    cluster_rank    = np.argsort(np.argsort(centroid_danger))  # 0=safest … 3=riskiest
 
-    df["CLUSTER"] = kmeans.fit_predict(X_scaled)
+    risk_label_map       = {c: _RISK_LABELS[cluster_rank[c]] for c in range(4)}
+    df["PREDICTED_RISK"] = df["CLUSTER"].map(risk_label_map)
 
-    # Map clusters to risk levels based on avg risk score
-    cluster_order = (
-        df.groupby("CLUSTER")["RISK_SCORE"]
-        .mean()
-        .sort_values()
-        .index
-        .tolist()
-    )
+    # ── Continuous RISK_SCORE from centroid-distance interpolation ─────────────
+    distances  = cdist(X_scaled, centroids, metric="euclidean")   # (n, 4)
+    vendor_idx = np.arange(len(df))
 
-    risk_map = {
-        cluster_order[0]: "Low",
-        cluster_order[1]: "Medium",
-        cluster_order[2]: "High",
-        cluster_order[3]: "Critical"
-    }
+    band_size  = 25.0
+    band_floor = cluster_rank[df["CLUSTER"].values] * band_size   # per-vendor base
 
-    df["RISK_LEVEL"] = df["CLUSTER"].map(risk_map)
+    own_dist   = distances[vendor_idx, df["CLUSTER"].values]
+    max_dist   = distances.max(axis=1).clip(min=1e-9)
+    within_pos = (own_dist / max_dist) * band_size                # 0 … band_size
 
-    return df
+    df["RISK_SCORE"] = np.clip(band_floor + within_pos, 0, 100).round(2)
+
+    return df, scaler, centroids
 
 
-# --------------------------------------------------
+# ═══════════════════════════════════════════════════════════════════════════════
 # RESULT OUTPUT
-# --------------------------------------------------
+# ═══════════════════════════════════════════════════════════════════════════════
 
-def _build_result(vendor_df,bsik):
+def _build_result(vendor_df: pd.DataFrame, bsik: pd.DataFrame) -> dict:
 
     total_vendors = len(vendor_df)
     total_overdue = float(vendor_df["TOTAL_OVERDUE_AMOUNT"].sum())
+    high_risk     = int((vendor_df["PREDICTED_RISK"] == "High").sum())
+    critical      = int((vendor_df["PREDICTED_RISK"] == "Critical").sum())
 
-    high_risk = int((vendor_df["RISK_LEVEL"]=="High").sum())
-    critical = int((vendor_df["RISK_LEVEL"]=="Critical").sum())
+    # ── Aging bucket distribution ──────────────────────────────────────────────
+    aging = bsik.groupby("AGING_BUCKET", observed=True)["DMBTR"].sum().to_dict()
+    for b in ["0-30", "31-60", "61-90", "91-120", "120+"]:
+        aging.setdefault(b, 0)
 
-    # Aging bucket distribution
-    aging = bsik.groupby("AGING_BUCKET")["DMBTR"].sum().to_dict()
+    # ── Risk distribution ──────────────────────────────────────────────────────
+    risk_dist = vendor_df["PREDICTED_RISK"].value_counts().to_dict()
+    for r in _RISK_LABELS:
+        risk_dist.setdefault(r, 0)
 
-    for b in ["0-30","31-60","61-90","91-120","120+"]:
-        aging.setdefault(b,0)
+    # ── Shared column rename map ───────────────────────────────────────────────
+    _rename = {
+        "LIFNR":                "vendor_id",
+        "NAME1":                "vendor_name",
+        "TOTAL_OVERDUE_AMOUNT": "overdue_amount",
+        "TOTAL_INVOICES":       "total_invoices",
+        "MAX_DAYS_OVERDUE":     "max_days_overdue",
+        "AVG_DAYS_OVERDUE":     "avg_days_overdue",
+        "RISK_SCORE":           "risk_score",
+        "PREDICTED_RISK":       "predicted_risk",
+    }
 
-    # Risk distribution
-    risk_dist = vendor_df["RISK_LEVEL"].value_counts().to_dict()
+    # ── Top-10 riskiest vendors ────────────────────────────────────────────────
+    top10_cols = ["LIFNR", "NAME1", "TOTAL_OVERDUE_AMOUNT", "RISK_SCORE", "PREDICTED_RISK"]
+    top10 = (
+        vendor_df.nlargest(10, "RISK_SCORE")[top10_cols]
+        .rename(columns=_rename)
+        .to_dict(orient="records")
+    )
 
-    for r in ["Low","Medium","High","Critical"]:
-        risk_dist.setdefault(r,0)
+    # ── Scatter data (all vendors, lightweight) ────────────────────────────────
+    scatter_cols = ["LIFNR", "NAME1", "TOTAL_OVERDUE_AMOUNT", "RISK_SCORE", "PREDICTED_RISK"]
+    scatter = (
+        vendor_df[scatter_cols]
+        .rename(columns=_rename)
+        .to_dict(orient="records")
+    )
 
-    # Top 10 risky vendors
-    top10 = vendor_df.nlargest(10,"RISK_SCORE")[[
-        "LIFNR",
-        "NAME1",
-        "TOTAL_OVERDUE_AMOUNT",
-        "RISK_SCORE",
-        "RISK_LEVEL"
-    ]]
-
-    top10 = top10.rename(columns={
-        "LIFNR":"vendor_id",
-        "NAME1":"vendor_name",
-        "TOTAL_OVERDUE_AMOUNT":"overdue_amount",
-        "RISK_SCORE":"risk_score",
-        "RISK_LEVEL":"risk_level"
-    })
-
-    # Scatter data
-    scatter = vendor_df.rename(columns={
-        "LIFNR":"vendor_id",
-        "NAME1":"vendor_name",
-        "TOTAL_OVERDUE_AMOUNT":"overdue_amount",
-        "RISK_SCORE":"risk_score",
-        "RISK_LEVEL":"risk_level"
-    })[["vendor_id","vendor_name","overdue_amount","risk_score","risk_level"]]
-
-    # Full table
-    table = scatter.sort_values("risk_score",ascending=False)
+    # ── Full vendor table ──────────────────────────────────────────────────────
+    table_cols = [
+        "LIFNR", "NAME1",
+        "TOTAL_OVERDUE_AMOUNT", "TOTAL_INVOICES",
+        "MAX_DAYS_OVERDUE", "AVG_DAYS_OVERDUE",
+        "RISK_SCORE", "PREDICTED_RISK",
+    ]
+    vendors = (
+        vendor_df[table_cols]
+        .rename(columns=_rename)
+        .sort_values("risk_score", ascending=False)
+        .to_dict(orient="records")
+    )
 
     return {
-
-        "kpi":{
-
+        "kpi": {
             "total_vendors": total_vendors,
-            "total_overdue": round(total_overdue,2),
-            "high_risk": high_risk,
-            "critical": critical
-
+            "total_overdue": round(total_overdue, 2),
+            "high_risk":     high_risk,
+            "critical":      critical,
         },
-
-        "aging_buckets": aging,
-
+        "aging_buckets":     aging,
         "risk_distribution": risk_dist,
-
-        "top10": top10.to_dict(orient="records"),
-
-        "scatter": scatter.to_dict(orient="records"),
-
-        "vendors": table.to_dict(orient="records")
-
+        "top10":             top10,
+        "scatter":           scatter,
+        "vendors":           vendors,
     }
