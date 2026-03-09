@@ -1,4 +1,3 @@
-
 """
 
 SAP Vendor Risk Monitoring System
@@ -8,17 +7,12 @@ Flask Application
 """
  
 import os
-
 import json
-
 import uuid
-
+import time
 from flask import Flask, render_template, request, jsonify, redirect, url_for, session
-
 from werkzeug.utils import secure_filename
-
 from ml_model import run_vendor_risk_analysis
-
 import numpy as np
  
 app = Flask(__name__)
@@ -81,6 +75,20 @@ def convert_numpy(obj):
         return obj.tolist()
 
     return obj
+
+
+def cleanup_old_results(max_age_seconds=86400):
+    """Delete result JSON files older than max_age_seconds (default: 24 hours)."""
+    try:
+        now = time.time()
+        for fname in os.listdir(RESULTS_FOLDER):
+            if not fname.endswith(".json"):
+                continue
+            fpath = os.path.join(RESULTS_FOLDER, fname)
+            if now - os.path.getmtime(fpath) > max_age_seconds:
+                os.remove(fpath)
+    except Exception:
+        pass
  
  
 # ---------------------------------------------------
@@ -99,6 +107,8 @@ def index():
 @app.route("/analyze", methods=["POST"])
 
 def analyze():
+
+    cleanup_old_results()   # purge result files older than 24 hours
  
     required = ["bsik_file", "lfa1_file", "lfb1_file"]
 
@@ -183,13 +193,15 @@ def results():
  
     if not result_id:
 
-        return redirect(url_for("index"))
+        return redirect(url_for("index", msg="no_session"))
  
     result_file = os.path.join(RESULTS_FOLDER, f"{result_id}.json")
  
     if not os.path.exists(result_file):
 
-        return redirect(url_for("index"))
+        session.pop("result_id", None)
+
+        return redirect(url_for("index", msg="expired"))
  
     with open(result_file) as f:
 
@@ -206,13 +218,15 @@ def vendors():
  
     if not result_id:
 
-        return redirect(url_for("index"))
+        return redirect(url_for("index", msg="no_session"))
  
     result_file = os.path.join(RESULTS_FOLDER, f"{result_id}.json")
  
     if not os.path.exists(result_file):
 
-        return redirect(url_for("index"))
+        session.pop("result_id", None)
+
+        return redirect(url_for("index", msg="expired"))
  
     with open(result_file) as f:
 
@@ -228,4 +242,3 @@ if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
 
     app.run(host="0.0.0.0", port=port, debug=False)
- 

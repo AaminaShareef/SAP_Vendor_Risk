@@ -38,6 +38,13 @@
       </div>
     </header>
 
+    <!-- Session / expiry banner -->
+    <div class="alert-banner alert-warning" id="sessionBanner" style="display:none">
+      <i class="fas fa-clock"></i>
+      <span id="sessionBannerMsg"></span>
+      <button onclick="document.getElementById('sessionBanner').style.display='none'"><i class="fas fa-times"></i></button>
+    </div>
+
     <!-- Upload Zone -->
     <div class="upload-container">
       <div class="upload-hero">
@@ -170,9 +177,122 @@
         <h4>Export Results</h4>
         <p>Download the complete risk assessment report as a CSV file for further analysis and reporting.</p>
       </div>
+      <div class="info-card info-card-sample">
+        <i class="fas fa-flask"></i>
+        <h4>Sample Data</h4>
+        <p>Don't have SAP data handy? Download sample CSV files to explore the system.</p>
+        <div class="sample-links">
+          <button class="sample-btn" onclick="downloadSample('bsik')"><i class="fas fa-file-csv"></i> BSIK_Open_Items.csv</button>
+          <button class="sample-btn" onclick="downloadSample('lfa1')"><i class="fas fa-file-csv"></i> LFA1_Vendor_Master_General.csv</button>
+          <button class="sample-btn" onclick="downloadSample('lfb1')"><i class="fas fa-file-csv"></i> LFB1_Vendor_Master_CompCode.csv</button>
+        </div>
+      </div>
     </div>
   </main>
 
   <script src="{{ url_for('static', filename='js/upload.js') }}"></script>
+  <script>
+    /* ── Session banner ──────────────────────────────────────────────────── */
+    (function() {
+      const params  = new URLSearchParams(window.location.search);
+      const msg     = params.get("msg");
+      const banner  = document.getElementById("sessionBanner");
+      const msgEl   = document.getElementById("sessionBannerMsg");
+      const msgs    = {
+        expired   : "Your previous analysis session expired (results are stored for 24 hours). Please re-upload your files.",
+        no_session: "No active session found. Please upload your SAP AP files to begin a new analysis.",
+      };
+      if (msg && msgs[msg] && banner) {
+        msgEl.textContent = msgs[msg];
+        banner.style.display = "flex";
+        /* clean URL without reloading */
+        history.replaceState(null, "", window.location.pathname);
+      }
+    })();
+
+    /* ── Sample CSV generator ────────────────────────────────────────────── */
+    function downloadSample(table) {
+      const samples = {
+        bsik: {
+          filename: "BSIK_Open_Items.csv",
+          content: [
+            "LIFNR,BLDAT,ZFBDT,DMBTR",
+            "V000001,2022-01-15,2022-02-14,45000.00",
+            "V000001,2022-03-10,2022-04-09,32000.50",
+            "V000002,2022-02-01,2022-03-03,125000.00",
+            "V000002,2022-05-20,2022-06-19,87500.75",
+            "V000003,2021-11-05,2021-12-05,210000.00",
+            "V000003,2022-01-22,2022-02-21,63000.00",
+            "V000004,2022-06-01,2022-06-30,9800.00",
+            "V000005,2022-04-15,2022-05-15,320000.00",
+          ].join("\n"),
+        },
+        lfa1: {
+          filename: "LFA1_Vendor_Master_General.csv",
+          content: [
+            "LIFNR,NAME1,LAND1,ORT01",
+            "V000001,Prime Associates,IN,Mumbai",
+            "V000002,Digital GmbH,DE,Berlin",
+            "V000003,Smart Inc,US,New York",
+            "V000004,Agro Ltd,IN,Chennai",
+            "V000005,Beta Services,GB,London",
+          ].join("\n"),
+        },
+        lfb1: {
+          filename: "LFB1_Vendor_Master_CompCode.csv",
+          content: [
+            "LIFNR,BUKRS,ZTERM",
+            "V000001,1000,NT30",
+            "V000002,1000,NT60",
+            "V000003,2000,NT30",
+            "V000004,1000,NT15",
+            "V000005,2000,NT45",
+          ].join("\n"),
+        },
+      };
+      const s    = samples[table];
+      const blob = new Blob([s.content], { type: "text/csv;charset=utf-8;" });
+      const url  = URL.createObjectURL(blob);
+      const a    = document.createElement("a");
+      a.href     = url;
+      a.download = s.filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    }
+  </script>
+
+  <style>
+    .alert-banner {
+      display: flex; align-items: center; gap: 10px;
+      padding: 10px 16px; border-radius: 10px;
+      margin-bottom: 16px; font-size: 13px;
+    }
+    .alert-warning {
+      background: rgba(234,179,8,0.12);
+      border: 1px solid rgba(234,179,8,0.3);
+      color: #fde047;
+    }
+    .alert-banner button {
+      margin-left: auto; background: transparent;
+      border: none; color: inherit; cursor: pointer; opacity: .6;
+    }
+    .alert-banner button:hover { opacity: 1; }
+    .info-card-sample { grid-column: span 2; }
+    .sample-links { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 12px; }
+    .sample-btn {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 6px 14px; border-radius: 8px;
+      border: 1px solid rgba(148,163,184,0.2);
+      background: rgba(99,102,241,0.08);
+      color: #a5b4fc; font-size: 12px; cursor: pointer;
+      transition: all .18s;
+    }
+    .sample-btn:hover {
+      background: rgba(99,102,241,0.18);
+      border-color: #6366f1;
+    }
+  </style>
 </body>
 </html>

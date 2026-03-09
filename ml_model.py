@@ -10,6 +10,7 @@ Pure K-Means pipeline:
   • Clusters ranked by centroid risk profile → Low / Medium / High / Critical
 """
 
+import os
 import pandas as pd
 import numpy as np
 from datetime import datetime
@@ -18,6 +19,17 @@ from sklearn.preprocessing import StandardScaler
 from scipy.spatial.distance import cdist
 import warnings
 warnings.filterwarnings("ignore")
+
+# ── Aging reference date ───────────────────────────────────────────────────────
+# Set AGING_REFERENCE_DATE env var (YYYY-MM-DD) to anchor aging calculations to
+# a specific date instead of today.  Useful when AP data is historically old and
+# all invoices would otherwise fall into the 120+ bucket.
+# Example (Heroku): heroku config:set AGING_REFERENCE_DATE=2023-02-25
+_ref_env = os.environ.get("AGING_REFERENCE_DATE", "").strip()
+try:
+    AGING_REFERENCE_DATE = datetime.strptime(_ref_env, "%Y-%m-%d") if _ref_env else datetime.today()
+except ValueError:
+    AGING_REFERENCE_DATE = datetime.today()
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -112,7 +124,7 @@ def _remap_columns(df: pd.DataFrame, col_map: dict) -> pd.DataFrame:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def _compute_aging(df: pd.DataFrame) -> pd.DataFrame:
-    today = datetime.today()
+    today = AGING_REFERENCE_DATE
     date_col = "ZFBDT" if "ZFBDT" in df.columns else "BLDAT"
     df["DAYS_OVERDUE"] = (today - df[date_col]).dt.days.clip(lower=0)
     bins   = [-1, 30, 60, 90, 120, float("inf")]
@@ -140,7 +152,7 @@ def _engineer_features(df: pd.DataFrame) -> pd.DataFrame:
       AMOUNT_CONCENTRATION   – Herfindahl-style: one huge invoice = riskier
       RECENCY_DAYS           – age of the oldest outstanding item
     """
-    today = datetime.today()
+    today = AGING_REFERENCE_DATE
     agg = df.groupby("LIFNR").apply(_vendor_feature_row, today=today).reset_index()
     return agg
 
@@ -295,6 +307,8 @@ def _build_result(vendor_df: pd.DataFrame, bsik: pd.DataFrame) -> dict:
         "TOTAL_INVOICES":       "total_invoices",
         "MAX_DAYS_OVERDUE":     "max_days_overdue",
         "AVG_DAYS_OVERDUE":     "avg_days_overdue",
+        "PCT_CRITICAL_INVOICES":"pct_critical_invoices",
+        "AMOUNT_CONCENTRATION": "amount_concentration",
         "RISK_SCORE":           "risk_score",
         "PREDICTED_RISK":       "predicted_risk",
     }
@@ -320,6 +334,7 @@ def _build_result(vendor_df: pd.DataFrame, bsik: pd.DataFrame) -> dict:
         "LIFNR", "NAME1",
         "TOTAL_OVERDUE_AMOUNT", "TOTAL_INVOICES",
         "MAX_DAYS_OVERDUE", "AVG_DAYS_OVERDUE",
+        "PCT_CRITICAL_INVOICES", "AMOUNT_CONCENTRATION",
         "RISK_SCORE", "PREDICTED_RISK",
     ]
     vendors = (
