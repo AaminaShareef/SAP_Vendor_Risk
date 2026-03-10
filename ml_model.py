@@ -1,14 +1,4 @@
-"""
-SAP Vendor Risk Analysis – ML Engine
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-Pure K-Means pipeline:
-  • Multi-dimensional feature engineering from AP data
-  • StandardScaler normalisation
-  • K-Means (k=4) clustering
-  • Cluster-centroid distance used to derive a continuous RISK_SCORE
-    (no hand-crafted weights — the model decides what matters)
-  • Clusters ranked by centroid risk profile → Low / Medium / High / Critical
-"""
+
 
 import os
 import pandas as pd
@@ -120,7 +110,7 @@ def _remap_columns(df: pd.DataFrame, col_map: dict) -> pd.DataFrame:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# AGING ANALYSIS  (unchanged — still needed for the aging-bucket KPI chart)
+# AGING ANALYSIS  
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def _compute_aging(df: pd.DataFrame) -> pd.DataFrame:

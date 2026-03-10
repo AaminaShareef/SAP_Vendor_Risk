@@ -10,6 +10,7 @@ import os
 import json
 import uuid
 import time
+import requests as http_requests
 from flask import Flask, render_template, request, jsonify, redirect, url_for, session
 from werkzeug.utils import secure_filename
 from ml_model import run_vendor_risk_analysis
@@ -233,8 +234,92 @@ def vendors():
         data = json.load(f)
  
     return render_template("vendors.html", data=json.dumps(data))
+
+
+@app.route("/intelligence")
+
+def intelligence():
+
+    result_id = session.get("result_id")
+
+    if not result_id:
+
+        return redirect(url_for("index", msg="no_session"))
+
+    result_file = os.path.join(RESULTS_FOLDER, f"{result_id}.json")
+
+    if not os.path.exists(result_file):
+
+        session.pop("result_id", None)
+
+        return redirect(url_for("index", msg="expired"))
+
+    with open(result_file) as f:
+
+        data = json.load(f)
+
+    return render_template("intelligence.html", data=json.dumps(data))
+
  
- 
+@app.route("/api/claude", methods=["POST"])
+def claude_proxy():
+    """
+    Server-side proxy for OpenRouter API calls.
+    Avoids CORS issues when calling the API from the browser.
+    Requires OPENROUTER_API_KEY environment variable to be set.
+    """
+    api_key = os.environ.get("OPENROUTER_API_KEY", "")
+    if not api_key:
+        return jsonify({"error": "OPENROUTER_API_KEY not set on server"}), 500
+
+    try:
+        payload = request.get_json(force=True)
+    except Exception:
+        return jsonify({"error": "Invalid JSON body"}), 400
+
+    # Convert Anthropic-style payload to OpenRouter/OpenAI format
+    messages = []
+    system_prompt = payload.get("system", "")
+    if system_prompt:
+        messages.append({"role": "system", "content": system_prompt})
+    for msg in payload.get("messages", []):
+        messages.append({"role": msg["role"], "content": msg["content"]})
+
+    openrouter_payload = {
+        "model":      payload.get("model", "arcee-ai/trinity-large-preview:free"),
+        "max_tokens": payload.get("max_tokens", 1000),
+        "messages":   messages,
+    }
+
+    try:
+        resp = http_requests.post(
+            "https://openrouter.ai/api/v1/chat/completions",
+            headers={
+                "Content-Type":  "application/json",
+                "Authorization": f"Bearer {api_key}",
+                "HTTP-Referer":  "http://localhost:5000",
+                "X-Title":       "SAP Vendor Risk Monitor",
+            },
+            json=openrouter_payload,
+            timeout=60,
+        )
+        data = resp.json()
+
+        # Translate OpenAI-style response back to Anthropic-style
+        # so intelligence.js doesn't need to change
+        if resp.status_code == 200 and "choices" in data:
+            text = data["choices"][0]["message"]["content"]
+            return jsonify({
+                "content": [{"type": "text", "text": text}]
+            }), 200
+        else:
+            err_msg = data.get("error", {}).get("message", str(data))
+            return jsonify({"error": err_msg}), resp.status_code
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
 if __name__ == "__main__":
 
     import os
